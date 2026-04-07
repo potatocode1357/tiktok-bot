@@ -21,7 +21,8 @@ async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("🔎 Fetching best quality...")
     output_path = f"video_{update.message.message_id}"
 
-    # FLEXIBLE SETTINGS: Merges best audio/video if possible, else grabs the best single file.
+    # FIXED FORMAT: This tells it to get the best video and audio and merge them,
+    # but if it fails, just grab the best single file available.
     ydl_opts = {
         "outtmpl": f"{output_path}.%(ext)s",
         "format": "bestvideo+bestaudio/best", 
@@ -36,7 +37,6 @@ async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Threading prevents the bot from freezing
             info = await asyncio.to_thread(ydl.extract_info, url, download=False)
             filesize = info.get('filesize') or info.get('filesize_approx') or 0
             
@@ -72,7 +72,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_download))
-    # drop_pending_updates=True makes the bot ignore messages sent while it was offline
+    # drop_pending_updates=True stops the bot from spamming you with old failed attempts
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
