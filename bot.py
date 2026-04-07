@@ -5,7 +5,7 @@ import yt_dlp
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
 
-# Use your token here
+# Your Token
 BOT_TOKEN = "8678444569:AAF8DMWWxXhQpCnmsc6cxUTTcC6CjO-i9mk"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -21,30 +21,32 @@ async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("🔎 Fetching best quality...")
     output_path = f"video_{update.message.message_id}"
 
-    # THE ULTIMATE SETTINGS (Requires FFmpeg)
+    # THE ULTIMATE SETTINGS (Now with Cookies pointing to cookies.txt)
     ydl_opts = {
         "outtmpl": f"{output_path}.%(ext)s",
-        # This downloads the best video and best audio separately and MERGES them
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "merge_output_format": "mp4",
         "quiet": True,
+        "cookiefile": "cookies.txt",  # This uses the file you just merged!
         "extractor_args": {"instagram": {"check_egotism": [True]}},
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            # Run extraction in a separate thread to keep bot alive
+            info = await asyncio.to_thread(ydl.extract_info, url, download=False)
             filesize = info.get('filesize') or info.get('filesize_approx') or 0
             
-            if filesize > 50000000:
+            if filesize > 50000000: # 50MB limit
                 await msg.edit_text("⚠️ Video too big (50MB+). Try a shorter one!")
                 return
 
             await msg.edit_text("📥 Downloading & Merging HQ Tracks...")
-            ydl.download([url])
+            # Run download in a separate thread
+            await asyncio.to_thread(ydl.download, [url])
 
         files = glob.glob(f"{output_path}.*")
         if not files:
@@ -63,6 +65,7 @@ async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(f"❌ Error: {str(e)}")
 
     finally:
+        # Cleanup video files from Railway's server after sending
         for f in glob.glob(f"{output_path}.*"):
             if os.path.exists(f):
                 os.remove(f)
