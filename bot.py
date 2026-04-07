@@ -21,13 +21,13 @@ async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("🔎 Fetching best quality...")
     output_path = f"video_{update.message.message_id}"
 
-    # THE ULTIMATE SETTINGS (Now with Cookies pointing to cookies.txt)
+    # FLEXIBLE SETTINGS: Merges best audio/video if possible, else grabs the best single file.
     ydl_opts = {
         "outtmpl": f"{output_path}.%(ext)s",
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": "bestvideo+bestaudio/best", 
         "merge_output_format": "mp4",
         "quiet": True,
-        "cookiefile": "cookies.txt",  # This uses the file you just merged!
+        "cookiefile": "cookies.txt",
         "extractor_args": {"instagram": {"check_egotism": [True]}},
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -36,7 +36,7 @@ async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Run extraction in a separate thread to keep bot alive
+            # Threading prevents the bot from freezing
             info = await asyncio.to_thread(ydl.extract_info, url, download=False)
             filesize = info.get('filesize') or info.get('filesize_approx') or 0
             
@@ -44,8 +44,7 @@ async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await msg.edit_text("⚠️ Video too big (50MB+). Try a shorter one!")
                 return
 
-            await msg.edit_text("📥 Downloading & Merging HQ Tracks...")
-            # Run download in a separate thread
+            await msg.edit_text("📥 Downloading & Merging...")
             await asyncio.to_thread(ydl.download, [url])
 
         files = glob.glob(f"{output_path}.*")
@@ -65,7 +64,6 @@ async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(f"❌ Error: {str(e)}")
 
     finally:
-        # Cleanup video files from Railway's server after sending
         for f in glob.glob(f"{output_path}.*"):
             if os.path.exists(f):
                 os.remove(f)
@@ -74,7 +72,8 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_download))
-    app.run_polling()
+    # drop_pending_updates=True makes the bot ignore messages sent while it was offline
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
