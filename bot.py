@@ -5,23 +5,25 @@ import yt_dlp
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
 
+# Your Token
 BOT_TOKEN = "8678444569:AAF8DMWWxXhQpCnmsc6cxUTTcC6CjO-i9mk"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚀 **HQ Downloader Online**\nSend me any link!")
+    await update.message.reply_text("🚀 **Ultimate HQ Downloader**\nSend me a TikTok, YouTube, or Instagram link!")
 
 async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
     if not url.startswith("http"):
         return
 
-    msg = await update.message.reply_text("🔎 Processing...")
+    msg = await update.message.reply_text("🔎 Fetching best quality...")
     output_path = f"video_{update.message.message_id}"
 
-    # Simplified options to avoid the "format not available" error
+    # THE FIX: Removed strict [ext=mp4] requirements. 
+    # This grabs the best quality and MERGES it into an mp4 container.
     ydl_opts = {
         "outtmpl": f"{output_path}.%(ext)s",
-        "format": "best",  # Just get the best single file available
+        "format": "bestvideo+bestaudio/best", 
         "merge_output_format": "mp4",
         "quiet": True,
         "cookiefile": "cookies.txt",
@@ -34,13 +36,15 @@ async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             await asyncio.to_thread(ydl.download, [url])
 
+        # Find the merged mp4 file
         files = glob.glob(f"{output_path}.*")
         if not files:
-            await msg.edit_text("❌ Failed to download.")
+            await msg.edit_text("❌ Failed. Try a different link.")
             return
 
         video_file = files[0]
         await msg.edit_text("📤 Uploading...")
+        
         with open(video_file, "rb") as f:
             await update.message.reply_video(video=f, supports_streaming=True)
         await msg.delete()
