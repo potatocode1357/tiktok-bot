@@ -5,10 +5,11 @@ import yt_dlp
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
 
+# Use your token here
 BOT_TOKEN = "8678444569:AAF8DMWWxXhQpCnmsc6cxUTTcC6CjO-i9mk"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚀 **Universal HQ Downloader**\nSend me a link from TikTok, YouTube, or Instagram!")
+    await update.message.reply_text("🚀 **Ultimate HQ Downloader**\nSend me a TikTok, YouTube, or Instagram link!")
 
 async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
@@ -17,20 +18,19 @@ async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not any(site in url for site in valid_sites):
         return
 
-    msg = await update.message.reply_text("🔎 Fetching high quality...")
+    msg = await update.message.reply_text("🔎 Fetching best quality...")
     output_path = f"video_{update.message.message_id}"
 
+    # THE ULTIMATE SETTINGS (Requires FFmpeg)
     ydl_opts = {
         "outtmpl": f"{output_path}.%(ext)s",
+        # This downloads the best video and best audio separately and MERGES them
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "merge_output_format": "mp4",
         "quiet": True,
-        # --- THE INSTA FIX ---
-        "extractor_args": {
-            "instagram": {"check_egotism": [True]}
-        },
+        "extractor_args": {"instagram": {"check_egotism": [True]}},
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
     }
 
@@ -43,12 +43,12 @@ async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await msg.edit_text("⚠️ Video too big (50MB+). Try a shorter one!")
                 return
 
-            await msg.edit_text("📥 Downloading HQ...")
+            await msg.edit_text("📥 Downloading & Merging HQ Tracks...")
             ydl.download([url])
 
         files = glob.glob(f"{output_path}.*")
         if not files:
-            await msg.edit_text("❌ Failed. Instagram is being extra tough today.")
+            await msg.edit_text("❌ Failed. The site might be blocking the bot.")
             return
 
         video_file = files[0]
