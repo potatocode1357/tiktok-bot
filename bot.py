@@ -33,6 +33,8 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     context.user_data['current_url'] = url
+    context.user_data['is_instagram'] = is_instagram(url)
+    context.user_data['is_tiktok'] = is_tiktok(url)
     msg = await update.message.reply_text("🔎 Fetching video info...")
 
     try:
@@ -65,8 +67,6 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if h:
                 available_heights.add(h)
         context.user_data['available_heights'] = available_heights
-        context.user_data['is_instagram'] = is_instagram(url)
-        context.user_data['is_tiktok'] = is_tiktok(url)
 
         keyboard = []
         row = []
@@ -80,18 +80,16 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         duration_text = f"⏱ {mins}m {secs}s\n" if duration else ""
         warning = "⚠️ Long video — try lower quality to stay under 50MB\n" if duration > 600 else ""
+        insta_note = "⚠️ Instagram only provides one quality — selection may not apply\n" if is_instagram(url) else ""
 
         await msg.edit_text(
-            f"✅ *{title}*\n{duration_text}{warning}\nPick a quality:",
+            f"✅ *{title}*\n{duration_text}{warning}{insta_note}\nPick a quality:",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
 
     except Exception:
         context.user_data['available_heights'] = set()
-        context.user_data['is_instagram'] = is_instagram(url)
-        context.user_data['is_tiktok'] = is_tiktok(url)
-
         keyboard = []
         row = []
         for label, q in QUALITIES:
@@ -127,13 +125,18 @@ async def download_and_send(url, quality, msg, chat_id, context):
     insta = context.user_data.get('is_instagram', False)
     tiktok = context.user_data.get('is_tiktok', False)
 
-    # Instagram and TikTok — never try to merge, just grab best single file
     if insta or tiktok:
+        # Instagram/TikTok only have one format — no merging, no ffmpeg
         if quality == 'best':
             f_choice = "best"
         else:
             q = int(quality)
-            f_choice = f"best[height<={q}]/best"
+            f_choice = (
+                f"best[height<={q}]"
+                f"/worst[height>={q}]"
+                f"/best[height<={q+200}]"
+                f"/best"
+            )
     elif quality == 'best':
         f_choice = "bestvideo+bestaudio/best"
     else:
@@ -169,7 +172,6 @@ async def download_and_send(url, quality, msg, chat_id, context):
         },
     }
 
-    # Only add merge and ffmpeg options for YouTube
     if not insta and not tiktok:
         ydl_opts["merge_output_format"] = "mp4"
 
