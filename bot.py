@@ -35,6 +35,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ydl_opts_info = {
             "quiet": True,
             "skip_download": True,
+            "noplaylist": True,
             "http_headers": {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             },
@@ -46,12 +47,14 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
             info = await asyncio.to_thread(ydl.extract_info, url, False)
 
+        if "entries" in info:
+            info = info["entries"][0]
+
         title = info.get("title", "Video")[:50]
         duration = info.get("duration", 0) or 0
         mins = duration // 60
         secs = duration % 60
 
-        # Build quality keyboard
         keyboard = []
         row = []
         for label, q in QUALITIES:
@@ -69,8 +72,22 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-    except Exception as e:
-        await msg.edit_text(f"❌ Could not fetch video info: {str(e)}")
+    except Exception:
+        # If info fetch fails still show quality menu
+        keyboard = []
+        row = []
+        for label, q in QUALITIES:
+            row.append(InlineKeyboardButton(label, callback_data=q))
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+
+        await msg.edit_text(
+            "✅ Video found! Pick a quality:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -91,10 +108,20 @@ async def download_and_send(url, quality, msg, chat_id, context):
 
     if quality == 'best':
         f_choice = "bestvideo+bestaudio/best"
+    elif int(quality) <= 360:
+        # Low qualities — grab pre-merged single file, no separate audio needed
+        f_choice = (
+            f"best[height<={quality}]"
+            f"/worst[height>={quality}]"
+            f"/best"
+        )
     else:
+        # High qualities — merge best video + audio streams
         f_choice = (
             f"bestvideo[height<={quality}]+bestaudio"
-            f"/bestvideo[height<={quality}]/best"
+            f"/bestvideo[height<={quality}]"
+            f"/bestvideo+bestaudio"
+            f"/best"
         )
 
     cookies_path = "cookies.txt"
@@ -103,6 +130,7 @@ async def download_and_send(url, quality, msg, chat_id, context):
         "format": f_choice,
         "merge_output_format": "mp4",
         "quiet": True,
+        "noplaylist": True,
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         },
@@ -116,7 +144,6 @@ async def download_and_send(url, quality, msg, chat_id, context):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = await asyncio.to_thread(ydl.extract_info, url, True)
             if info:
-                # For playlists or single videos
                 if "entries" in info:
                     info = info["entries"][0]
                 actual_quality = info.get("height")
@@ -150,15 +177,7 @@ async def download_and_send(url, quality, msg, chat_id, context):
         await msg.delete()
 
     except Exception as e:
-        error_msg = str(e)
-        if "format" in error_msg.lower() or "not available" in error_msg.lower():
-            await msg.edit_text("❌ That quality isn't available. Try a lower one or Best Available.")
-        elif "private" in error_msg.lower():
-            await msg.edit_text("❌ This video is private and can't be downloaded.")
-        elif "copyright" in error_msg.lower():
-            await msg.edit_text("❌ This video is blocked due to copyright.")
-        else:
-            await msg.edit_text(f"❌ Error: {error_msg}")
+        await msg.edit_text(f"❌ Error: {str(e)}")
 
     finally:
         for f in glob.glob(f"{output_path}.*"):
