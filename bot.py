@@ -9,6 +9,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_TOKEN_HERE")
 
 QUALITIES = [
     ("4K 🌟", "2160"),
+    ("1440p ✨", "1440"),
     ("1080p 🔥", "1080"),
     ("720p 💎", "720"),
     ("480p 📱", "480"),
@@ -55,6 +56,14 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mins = duration // 60
         secs = duration % 60
 
+        # Store available heights for smart fallback
+        available_heights = set()
+        for f in info.get("formats", []):
+            h = f.get("height")
+            if h:
+                available_heights.add(h)
+        context.user_data['available_heights'] = available_heights
+
         keyboard = []
         row = []
         for label, q in QUALITIES:
@@ -66,14 +75,16 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append(row)
 
         duration_text = f"⏱ {mins}m {secs}s\n" if duration else ""
+        warning = "⚠️ Long video — use lower quality to stay under 50MB\n" if duration > 600 else ""
+
         await msg.edit_text(
-            f"✅ *{title}*\n{duration_text}\nPick a quality:",
+            f"✅ *{title}*\n{duration_text}{warning}\nPick a quality:",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
 
     except Exception:
-        # If info fetch fails still show quality menu
+        context.user_data['available_heights'] = set()
         keyboard = []
         row = []
         for label, q in QUALITIES:
@@ -105,24 +116,37 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def download_and_send(url, quality, msg, chat_id, context):
     output_path = f"video_{msg.message_id}"
+    available = context.user_data.get('available_heights', set())
 
     if quality == 'best':
         f_choice = "bestvideo+bestaudio/best"
-    elif int(quality) <= 360:
-        # Low qualities — grab pre-merged single file, no separate audio needed
-        f_choice = (
-            f"best[height<={quality}]"
-            f"/worst[height>={quality}]"
-            f"/best"
-        )
     else:
-        # High qualities — merge best video + audio streams
-        f_choice = (
-            f"bestvideo[height<={quality}]+bestaudio"
-            f"/bestvideo[height<={quality}]"
-            f"/bestvideo+bestaudio"
-            f"/best"
-        )
+        q = int(quality)
+
+        # Find best height at or below requested
+        if available:
+            below = [h for h in available if h <= q]
+            use_height = max(below) if below else min(available)
+            if use_height != q:
+                await msg.edit_text(f"📥 {q}p not available, downloading {use_height}p instead...")
+        else:
+            use_height = q
+
+        if use_height <= 360:
+            f_choice = (
+                f"best[height<={use_height}]"
+                f"/best[height<={use_height + 100}]"
+                f"/best"
+            )
+        else:
+            # Always use <= never exact match to avoid "format not available"
+            f_choice = (
+                f"bestvideo[height<={use_height}][ext=mp4]+bestaudio[ext=m4a]"
+                f"/bestvideo[height<={use_height}]+bestaudio"
+                f"/bestvideo[height<={use_height}]"
+                f"/best[height<={use_height}]"
+                f"/best"
+            )
 
     cookies_path = "cookies.txt"
     ydl_opts = {
@@ -158,7 +182,8 @@ async def download_and_send(url, quality, msg, chat_id, context):
 
         if file_size > 50:
             await msg.edit_text(
-                f"❌ File is {file_size:.1f}MB — Telegram's limit is 50MB.\nTry a lower quality."
+                f"❌ File is {file_size:.1f}MB — Telegram's limit is 50MB.\n"
+                f"This video is too long or too high quality. Try a lower quality or a shorter video."
             )
             return
 
