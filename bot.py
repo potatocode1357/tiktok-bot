@@ -18,6 +18,9 @@ QUALITIES = [
     ("🎬 Best Available", "best"),
 ]
 
+def is_instagram(url): return "instagram.com" in url
+def is_tiktok(url): return "tiktok.com" in url
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🚀 *Pro Downloader Online*\n\nSend me a YouTube, TikTok, or Instagram link!",
@@ -38,7 +41,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "skip_download": True,
             "noplaylist": True,
             "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             },
         }
         cookies_path = "cookies.txt"
@@ -56,13 +59,14 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mins = duration // 60
         secs = duration % 60
 
-        # Store available heights for smart fallback
         available_heights = set()
         for f in info.get("formats", []):
             h = f.get("height")
             if h:
                 available_heights.add(h)
         context.user_data['available_heights'] = available_heights
+        context.user_data['is_instagram'] = is_instagram(url)
+        context.user_data['is_tiktok'] = is_tiktok(url)
 
         keyboard = []
         row = []
@@ -75,7 +79,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append(row)
 
         duration_text = f"⏱ {mins}m {secs}s\n" if duration else ""
-        warning = "⚠️ Long video — use lower quality to stay under 50MB\n" if duration > 600 else ""
+        warning = "⚠️ Long video — try lower quality to stay under 50MB\n" if duration > 600 else ""
 
         await msg.edit_text(
             f"✅ *{title}*\n{duration_text}{warning}\nPick a quality:",
@@ -85,6 +89,9 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception:
         context.user_data['available_heights'] = set()
+        context.user_data['is_instagram'] = is_instagram(url)
+        context.user_data['is_tiktok'] = is_tiktok(url)
+
         keyboard = []
         row = []
         for label, q in QUALITIES:
@@ -117,13 +124,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def download_and_send(url, quality, msg, chat_id, context):
     output_path = f"video_{msg.message_id}"
     available = context.user_data.get('available_heights', set())
+    insta = context.user_data.get('is_instagram', False)
+    tiktok = context.user_data.get('is_tiktok', False)
 
-    if quality == 'best':
+    # Instagram and TikTok — never try to merge, just grab best single file
+    if insta or tiktok:
+        if quality == 'best':
+            f_choice = "best"
+        else:
+            q = int(quality)
+            f_choice = f"best[height<={q}]/best"
+    elif quality == 'best':
         f_choice = "bestvideo+bestaudio/best"
     else:
         q = int(quality)
 
-        # Find best height at or below requested
         if available:
             below = [h for h in available if h <= q]
             use_height = max(below) if below else min(available)
@@ -133,13 +148,8 @@ async def download_and_send(url, quality, msg, chat_id, context):
             use_height = q
 
         if use_height <= 360:
-            f_choice = (
-                f"best[height<={use_height}]"
-                f"/best[height<={use_height + 100}]"
-                f"/best"
-            )
+            f_choice = f"best[height<={use_height}]/best"
         else:
-            # Always use <= never exact match to avoid "format not available"
             f_choice = (
                 f"bestvideo[height<={use_height}][ext=mp4]+bestaudio[ext=m4a]"
                 f"/bestvideo[height<={use_height}]+bestaudio"
@@ -152,13 +162,17 @@ async def download_and_send(url, quality, msg, chat_id, context):
     ydl_opts = {
         "outtmpl": f"{output_path}.%(ext)s",
         "format": f_choice,
-        "merge_output_format": "mp4",
         "quiet": True,
         "noplaylist": True,
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         },
     }
+
+    # Only add merge and ffmpeg options for YouTube
+    if not insta and not tiktok:
+        ydl_opts["merge_output_format"] = "mp4"
+
     if os.path.exists(cookies_path):
         ydl_opts["cookiefile"] = cookies_path
 
@@ -182,8 +196,7 @@ async def download_and_send(url, quality, msg, chat_id, context):
 
         if file_size > 50:
             await msg.edit_text(
-                f"❌ File is {file_size:.1f}MB — Telegram's limit is 50MB.\n"
-                f"This video is too long or too high quality. Try a lower quality or a shorter video."
+                f"❌ File is {file_size:.1f}MB — Telegram limit is 50MB.\nTry a lower quality."
             )
             return
 
