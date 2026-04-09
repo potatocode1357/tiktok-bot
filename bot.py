@@ -20,10 +20,27 @@ QUALITIES = [
 
 def is_instagram(url): return "instagram.com" in url
 def is_tiktok(url): return "tiktok.com" in url
+def is_snapchat(url): return "snapchat.com" in url or "snap.com" in url
+
+def is_story(url):
+    return (
+        "instagram.com/stories" in url or
+        "instagram.com/reels" in url or
+        "snapchat.com/add" in url or
+        "snapchat.com/story" in url or
+        "story.snapchat.com" in url or
+        "snapchat.com/spotlight" in url
+    )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🚀 *Pro Downloader Online*\n\nSend me a YouTube, TikTok, or Instagram link!",
+        "🚀 *Pro Downloader Online*\n\n"
+        "Send me a link from:\n"
+        "• YouTube\n"
+        "• TikTok\n"
+        "• Instagram (posts, reels, stories)\n"
+        "• Snapchat (stories, spotlight)\n\n"
+        "I'll handle the rest!",
         parse_mode="Markdown"
     )
 
@@ -35,15 +52,18 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['current_url'] = url
     context.user_data['is_instagram'] = is_instagram(url)
     context.user_data['is_tiktok'] = is_tiktok(url)
+    context.user_data['is_snapchat'] = is_snapchat(url)
+    context.user_data['is_story'] = is_story(url)
+
     msg = await update.message.reply_text("🔎 Fetching video info...")
 
     try:
         ydl_opts_info = {
             "quiet": True,
             "skip_download": True,
-            "noplaylist": True,
+            "noplaylist": False,
             "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             },
         }
         cookies_path = "cookies.txt"
@@ -54,7 +74,15 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             info = await asyncio.to_thread(ydl.extract_info, url, False)
 
         if "entries" in info:
-            info = info["entries"][0]
+            entries = list(info["entries"])
+            context.user_data['entries'] = entries
+            context.user_data['is_playlist'] = True
+            count = len(entries)
+            info = entries[0]
+        else:
+            context.user_data['entries'] = None
+            context.user_data['is_playlist'] = False
+            count = 1
 
         title = info.get("title", "Video")[:50]
         duration = info.get("duration", 0) or 0
@@ -80,16 +108,21 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         duration_text = f"⏱ {mins}m {secs}s\n" if duration else ""
         warning = "⚠️ Long video — try lower quality to stay under 50MB\n" if duration > 600 else ""
-        insta_note = "⚠️ Instagram only provides one quality — selection may not apply\n" if is_instagram(url) else ""
+        story_note = f"📖 Story with {count} clip(s)\n" if context.user_data['is_playlist'] else ""
+        insta_note = "⚠️ Instagram only provides one quality\n" if is_instagram(url) and not is_story(url) else ""
+        snap_note = "👻 Snapchat story detected\n" if is_snapchat(url) else ""
 
         await msg.edit_text(
-            f"✅ *{title}*\n{duration_text}{warning}{insta_note}\nPick a quality:",
+            f"✅ *{title}*\n{duration_text}{story_note}{warning}{insta_note}{snap_note}\nPick a quality:",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
 
     except Exception:
         context.user_data['available_heights'] = set()
+        context.user_data['entries'] = None
+        context.user_data['is_playlist'] = False
+
         keyboard = []
         row = []
         for label, q in QUALITIES:
@@ -115,25 +148,41 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Session timed out. Send the link again.")
         return
 
+    is_playlist = context.user_data.get('is_playlist', False)
+    entries = context.user_data.get('entries')
+
     label = "Best Available" if quality == 'best' else f"{quality}p"
     await query.edit_message_text(f"📥 Downloading at {label}...")
-    await download_and_send(url, quality, query.message, query.message.chat_id, context)
 
-async def download_and_send(url, quality, msg, chat_id, context):
-    output_path = f"video_{msg.message_id}"
+    if is_playlist and entries:
+        total = len(entries)
+        for i, entry in enumerate(entries, 1):
+            clip_url = entry.get("webpage_url") or entry.get("url") or url
+            await query.message.reply_text(f"📥 Downloading clip {i}/{total}...")
+            await download_and_send(
+                clip_url, quality,
+                query.message, query.message.chat_id,
+                context, clip_num=i, total_clips=total
+            )
+        await query.edit_message_text(f"✅ Done! Sent {total} clips.")
+    else:
+        await download_and_send(url, quality, query.message, query.message.chat_id, context)
+
+async def download_and_send(url, quality, msg, chat_id, context, clip_num=None, total_clips=None):
+    output_path = f"video_{msg.message_id}_{clip_num or 0}"
     available = context.user_data.get('available_heights', set())
     insta = context.user_data.get('is_instagram', False)
     tiktok = context.user_data.get('is_tiktok', False)
+    snapchat = context.user_data.get('is_snapchat', False)
+    story = context.user_data.get('is_story', False)
 
-    if insta or tiktok:
-        # Instagram/TikTok only have one format — no merging, no ffmpeg
+    if insta or tiktok or snapchat or story:
         if quality == 'best':
             f_choice = "best"
         else:
             q = int(quality)
             f_choice = (
                 f"best[height<={q}]"
-                f"/worst[height>={q}]"
                 f"/best[height<={q+200}]"
                 f"/best"
             )
@@ -168,11 +217,11 @@ async def download_and_send(url, quality, msg, chat_id, context):
         "quiet": True,
         "noplaylist": True,
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         },
     }
 
-    if not insta and not tiktok:
+    if not (insta or tiktok or snapchat or story):
         ydl_opts["merge_output_format"] = "mp4"
 
     if os.path.exists(cookies_path):
@@ -203,14 +252,15 @@ async def download_and_send(url, quality, msg, chat_id, context):
             return
 
         quality_text = f"{actual_quality}p" if actual_quality else "Best Available"
-        await msg.edit_text(f"📤 Uploading in {quality_text}...")
+        clip_text = f" (clip {clip_num}/{total_clips})" if clip_num else ""
+        await msg.edit_text(f"📤 Uploading in {quality_text}{clip_text}...")
 
         with open(video_file, "rb") as f:
             await context.bot.send_video(
                 chat_id=chat_id,
                 video=f,
                 supports_streaming=True,
-                caption=f"✅ Downloaded in *{quality_text}*",
+                caption=f"✅ Downloaded in *{quality_text}*{clip_text}",
                 parse_mode="Markdown"
             )
 
